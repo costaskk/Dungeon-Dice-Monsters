@@ -1,0 +1,6 @@
+/* tiny helper animations if you want to add className="ddm-pop" somewhere */
+@keyframes ddm-pop {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.ddm-pop { animation: ddm-pop 220ms ease-out; }
