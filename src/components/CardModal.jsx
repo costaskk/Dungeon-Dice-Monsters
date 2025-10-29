@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../game/state";
 import Sprite from "./Sprite";
@@ -6,12 +6,16 @@ import Sprite from "./Sprite";
 export default function CardModal() {
   const { modalCard, setModalCard, modalOwner, hideCardModal, showCardModal } = useGame();
   const [isHovered, setIsHovered] = useState(false);
+  const containerRef = useRef(null);
 
-  // Close if pointer leaves entire browser window
+  // Close if pointer leaves entire browser window (with a little guard)
   useEffect(() => {
     if (!modalCard) return;
     const handleLeaveWindow = (e) => {
-      if (e.clientY <= 0 || e.clientX <= 0) setModalCard(null);
+      // Only close if genuinely outside viewport (ignore devtools edges)
+      if (e.clientY <= 0 || e.clientX <= 0 || e.clientX >= window.innerWidth) {
+        setModalCard(null);
+      }
     };
     window.addEventListener("mouseleave", handleLeaveWindow);
     return () => window.removeEventListener("mouseleave", handleLeaveWindow);
@@ -20,25 +24,24 @@ export default function CardModal() {
   if (!modalCard) return null;
   const c = modalCard;
 
+  const idKey = modalOwner ?? (c.id || c.name || "card");
   const handleEnter = () => {
     setIsHovered(true);
-    showCardModal(c, modalOwner ?? (c.id || c.name));
+    showCardModal(c, idKey);
   };
   const handleLeave = () => {
     setIsHovered(false);
+    // slight delay to allow moving between image/text without flicker
     setTimeout(() => {
-      if (!isHovered) hideCardModal(modalOwner ?? (c.id || c.name), 0);
+      if (!isHovered) hideCardModal(idKey, 0);
     }, 120);
   };
 
-  // Close modal immediately on click
-  const handleClickClose = () => {
-    setModalCard(null);
-  };
+  const handleBackdropClick = () => setModalCard(null);
+  const stop = (e) => e.stopPropagation();
 
-  // Frame color by family / rarity
-  const typeStr = (c.type || '').toLowerCase();
-  const rarityStr = (c.rarity || '').toLowerCase();
+  const typeStr = (c.type || "").toLowerCase();
+  const rarityStr = (c.rarity || "").toLowerCase();
   const frameColor =
     typeStr.includes("trap")
       ? "from-purple-900/90 to-indigo-800/90 border-purple-600"
@@ -47,9 +50,11 @@ export default function CardModal() {
       : typeStr.includes("fusion") || rarityStr.includes("ultra")
       ? "from-amber-900/90 to-yellow-700/90 border-amber-400"
       : "from-rose-900/90 to-red-800/90 border-rose-500";
-  const glow = rarityStr.includes("ultra") || rarityStr.includes("rare")
-    ? "shadow-[0_0_20px_rgba(255,255,200,0.6)]"
-    : "";
+
+  const glow =
+    rarityStr.includes("ultra") || rarityStr.includes("rare")
+      ? "shadow-[0_0_20px_rgba(255,255,200,0.6)]"
+      : "";
 
   const stars = c.stars ?? c.level ?? 1;
   const summonCondition =
@@ -59,6 +64,8 @@ export default function CardModal() {
       ? "Requires 2 matching dice faces (★3–4) or one Wild (black) die."
       : "Requires 2 matching dice faces (★5–6) or a Wild die. Some ★6 may require 3 summon crests.";
 
+  const bigImg = c.large || c.thumb || null;
+
   return (
     <AnimatePresence>
       {modalCard && (
@@ -66,33 +73,33 @@ export default function CardModal() {
           className="fixed inset-0 z-50 flex items-center justify-center"
           onPointerEnter={handleEnter}
           onPointerLeave={handleLeave}
-          onClick={handleClickClose}
+          onClick={handleBackdropClick}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }}
         >
           <motion.div
+            ref={containerRef}
             className={`pointer-events-auto bg-gradient-to-br ${frameColor} ${glow} rounded-2xl shadow-2xl w-[92%] max-w-2xl p-4 border backdrop-blur-md`}
+            onClick={stop}
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
             transition={{ duration: 0.25 }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={c.name || "Card details"}
           >
             <div className="flex flex-col md:flex-row items-start gap-4">
               {/* Card Image */}
               <div className="flex-shrink-0 relative">
-                {c.large ? (
+                {bigImg ? (
                   <img
-                    src={c.large}
-                    alt={c.name}
+                    src={bigImg}
+                    alt={c.name || "Card"}
                     className={`w-48 h-72 object-cover rounded-lg border border-slate-700 shadow-md ${glow}`}
-                  />
-                ) : c.thumb ? (
-                  <img
-                    src={c.thumb}
-                    alt={c.name}
-                    className={`w-48 h-72 object-cover rounded-lg border border-slate-700 shadow-md ${glow}`}
+                    draggable={false}
                   />
                 ) : (
                   <div className="w-48 h-72 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700">
@@ -107,7 +114,7 @@ export default function CardModal() {
               {/* Info Panel */}
               <div className="flex flex-col gap-1 text-slate-100 text-sm leading-tight max-w-[60ch]">
                 <div className="text-2xl font-bold text-amber-200 drop-shadow-sm break-words">
-                  {c.name}
+                  {c.name || "Unknown Card"}
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs text-slate-300 mb-2">
                   {c.rarity && (

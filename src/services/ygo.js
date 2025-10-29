@@ -1,14 +1,24 @@
-// Public image search + safe sprite suggestions for cards
-// - Tries your Vercel API first, then YGOPRODeck directly (strict then fuzzy).
-// - Provides a free, attribution-friendly sprite URL fallback via game-icons.net.
+// Public image search scoped to your local official card list.
+// - Loads and indexes /yugioh_card_database.json once (name -> entry).
+// - Uses local card_images immediately if present.
+// - Otherwise queries your Vercel API (then YGOPRODeck) **only for official names**.
+// - Non-official names return null immediately (no network).
+//
+// Also exports a tiny helper to check whether a name is official.
 
 const CACHE = new Map();
+const NEG_CACHE = new Set();
+
 const isBrowser =
   typeof window !== 'undefined' && typeof fetch !== 'undefined';
 const isDev =
   isBrowser && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
-// Small helper: timeout fetch (prevents hangs in prod)
+// ---------- helpers ----------
+function normName(s = '') {
+  return String(s).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 async function fetchWithTimeout(url, { timeoutMs = 6000, ...opts } = {}) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -20,14 +30,56 @@ async function fetchWithTimeout(url, { timeoutMs = 6000, ...opts } = {}) {
   }
 }
 
+// ---------- local DB (loaded once) ----------
+let CARDLIST_PROMISE = null;
+let NAME_INDEX = null;
+
+async function ensureCardList() {
+  if (CARDLIST_PROMISE) return CARDLIST_PROMISE;
+  CARDLIST_PROMISE = (async () => {
+    try {
+      // Vite serves files from /public at the root
+      const res = await fetch('/yugioh_card_database.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error('db json not found');
+      const json = await res.json();
+      const rows = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+      const idx = new Map();
+      for (const c of rows) {
+        if (!c?.name) continue;
+        idx.set(normName(c.name), c);
+      }
+      NAME_INDEX = idx;
+      return idx;
+    } catch (e) {
+      // If the file is missing or malformed, we keep an empty map.
+      NAME_INDEX = new Map();
+      return NAME_INDEX;
+    }
+  })();
+  return CARDLIST_PROMISE;
+}
+
+export async function isOfficialCardName(name) {
+  await ensureCardList();
+  return NAME_INDEX?.has(normName(name)) || false;
+}
+
+function extractLocalImages(entry) {
+  // YGOPRODeck schema typically: entry.card_images: [{ image_url, image_url_small, ... }]
+  const img = entry?.card_images?.[0];
+  if (!img) return null;
+  return {
+    small: img.image_url_small || img.image_url || null,
+    large: img.image_url || img.image_url_small || null,
+  };
+}
+
+// ---------- remote fetchers (only used for official names) ----------
 async function fetchFromVercel(name) {
   try {
-    const res = await fetchWithTimeout(
-      `/api/ygo-cardinfo?name=${encodeURIComponent(name)}`
-    );
+    const res = await fetchWithTimeout(`/api/ygo-cardinfo?name=${encodeURIComponent(name)}`);
     if (!res.ok) return null;
     const json = await res.json();
-    // Support either { data:[{card_images:[...] }]} or { card_images:[...] }
     const img =
       json?.card_images?.[0] ||
       (Array.isArray(json?.data) && json.data[0]?.card_images?.[0]) ||
@@ -39,10 +91,7 @@ async function fetchFromVercel(name) {
 }
 
 async function fetchDirect(name) {
-  // strict by exact name
-  const strictURL = `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(
-    name
-  )}`;
+  const strictURL = `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(name)}`;
   try {
     let r = await fetchWithTimeout(strictURL);
     if (r.ok) {
@@ -50,14 +99,9 @@ async function fetchDirect(name) {
       const img = data?.data?.[0]?.card_images?.[0];
       if (img) return img;
     }
-  } catch {
-    /* noop */
-  }
+  } catch { /* noop */ }
 
-  // fuzzy by fname
-  const fuzzyURL = `https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=${encodeURIComponent(
-    name
-  )}`;
+  const fuzzyURL = `https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=${encodeURIComponent(name)}`;
   try {
     let r = await fetchWithTimeout(fuzzyURL);
     if (r.ok) {
@@ -65,41 +109,66 @@ async function fetchDirect(name) {
       const img = data?.data?.[0]?.card_images?.[0];
       if (img) return img;
     }
-  } catch {
-    /* noop */
-  }
+  } catch { /* noop */ }
 
   return null;
 }
 
+// ---------- main API ----------
 /**
  * searchCardImages(name, rehost?)
  * Returns { small, large } or null
- * - If `rehost` is true (and not dev), image URLs are proxied through /api/ygo-image
+ * - Only searches for official names present in /yugioh_card_database.json.
+ * - If local DB has card_images, uses those without any network.
+ * - Otherwise queries your serverless endpoint then YGOPRODeck.
  */
 export async function searchCardImages(name, rehost = false) {
   if (!name) return null;
-  const key = `imgs:${name}:${rehost ? '1' : '0'}:${isDev ? 'dev' : 'prod'}`;
-  if (CACHE.has(key)) return CACHE.get(key);
 
-  // Try your serverless endpoint first (handles CORS/rate-limiting better), then direct
-  let img = await fetchFromVercel(name);
-  if (!img) img = await fetchDirect(name);
-  if (!img) return null;
+  const n = normName(name);
 
-  let small = img.image_url_small || img.image_url;
-  let large = img.image_url || img.image_url_small || small;
+  // Negative cache: skip repeated misses
+  const negKey = `neg:${n}`;
+  if (NEG_CACHE.has(negKey)) return null;
 
-  // Rehost disabled locally (to avoid 404 if /api not wired in dev)
-  if (rehost && !isDev) {
-    const wrap = (url) =>
-      url ? `/api/ygo-image?url=${encodeURIComponent(url)}` : null;
-    small = wrap(small);
-    large = wrap(large);
+  // Load known cards once
+  await ensureCardList();
+
+  const entry = NAME_INDEX?.get(n);
+  if (!entry) {
+    // not an official card -> no network fetch
+    NEG_CACHE.add(negKey);
+    return null;
   }
 
-  const out = { small, large };
-  CACHE.set(key, out);
+  // Cache (keyed by exact name + env + rehost flag)
+  const cacheKey = `imgs:${entry.name}:${rehost ? '1' : '0'}:${isDev ? 'dev' : 'prod'}`;
+  if (CACHE.has(cacheKey)) return CACHE.get(cacheKey);
+
+  // 1) If local JSON already has images, prefer them
+  let out = extractLocalImages(entry);
+
+  // 2) Otherwise try serverless then direct
+  if (!out || (!out.small && !out.large)) {
+    let img = await fetchFromVercel(entry.name);
+    if (!img) img = await fetchDirect(entry.name);
+    if (!img) {
+      NEG_CACHE.add(negKey);
+      return null;
+    }
+    out = {
+      small: img.image_url_small || img.image_url || null,
+      large: img.image_url || img.image_url_small || null,
+    };
+  }
+
+  // Rehost disabled locally (to avoid dev 404 on /api)
+  if (rehost && !isDev) {
+    const wrap = (url) => (url ? `/api/ygo-image?url=${encodeURIComponent(url)}` : null);
+    out = { small: wrap(out.small), large: wrap(out.large) };
+  }
+
+  CACHE.set(cacheKey, out);
   return out;
 }
 
@@ -112,8 +181,6 @@ export async function searchCardImages(name, rehost = false) {
 export function spriteUrlForCard(name = '', type = '') {
   const src = `${name} ${type}`.toLowerCase();
 
-  // Decide an icon slug; you can extend this map anytime.
-  // Browse: https://game-icons.net/ for more options.
   let slug = 'wizard-staff'; // default
   if (/(dragon|wyrm|wyvern)/.test(src)) slug = 'dragon-head';
   else if (/(spellcaster|magician|wizard)/.test(src)) slug = 'wizard-staff';
@@ -124,6 +191,5 @@ export function spriteUrlForCard(name = '', type = '') {
   else if (/(machine|robot|gear)/.test(src)) slug = 'robot-golem';
   else if (/(fairy|angel)/.test(src)) slug = 'angel-outfit';
 
-  // The CDN renders icons as SVG; color=ffffff on bg-current in your UI is nice.
   return `https://game-icons.net/icons/ffffff/000000/1x/lorc/${slug}.svg`;
 }

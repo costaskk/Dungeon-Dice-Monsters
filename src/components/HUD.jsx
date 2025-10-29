@@ -158,6 +158,7 @@ export default function HUD(){
           </div>
         </div>
 
+        {/* Rehost toggle */}
         <div className="mt-2 flex items-center justify-between text-xs">
           <span>Rehost images via your domain</span>
           <label className="inline-flex items-center gap-2 cursor-pointer">
@@ -187,6 +188,7 @@ export default function HUD(){
         </div>
       </div>
 
+      {/* Compact sticky HUD for phones */}
       <div className="fixed bottom-2 left-0 right-0 px-3 md:hidden">
         <div className="mx-auto max-w-md rounded-2xl bg-slate-900/95 backdrop-blur p-2 shadow-xl flex items-center justify-between text-xs">
           <div>Turn: <b>{turn+1}</b></div>
@@ -210,6 +212,7 @@ function SummonCard({ m, showCardModal, hideCardModal }) {
   useEffect(() => {
     let alive = true
     ;(async () => {
+      // searchCardImages now only fetches for official names present in local DB
       const imgs = await searchCardImages(m.name, rehostImages)
       if (!alive) return
       const small = imgs?.small || null

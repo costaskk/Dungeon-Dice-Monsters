@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { searchCardImages } from '../services/ygo'
 
 /** Simple rules (tweak freely or extend from PDF Items in advanced mode)
@@ -80,8 +80,8 @@ export default function DeckBuilder({ allCards, onClose }){
               placeholder="Search name/type..."
               className="w-full mb-2 px-3 py-2 rounded-lg bg-slate-800 outline-none"
             />
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-[60vh] overflow-auto pr-1">
-              {pool.map(c => <PoolCard key={c.id} card={c} onAdd={()=>addCard(c)} />)}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h:[60vh] md:max-h-[60vh] overflow-auto pr-1">
+              {pool.map(c => <PoolCard key={c.id || c.name} card={c} onAdd={()=>addCard(c)} />)}
             </div>
           </div>
 
@@ -93,7 +93,7 @@ export default function DeckBuilder({ allCards, onClose }){
             </div>
             <div className="max-h-[52vh] overflow-auto pr-1 space-y-2">
               {deck.map((c,i)=>(
-                <div key={i} className="flex items-center justify-between bg-slate-900/70 rounded-lg p-2">
+                <div key={`${c.id || c.name}-${i}`} className="flex items-center justify-between bg-slate-900/70 rounded-lg p-2">
                   <div className="truncate">{c.name}</div>
                   <button onClick={()=>removeCard(i)} className="text-xs px-2 py-1 bg-rose-600 rounded-md">Remove</button>
                 </div>
@@ -121,16 +121,23 @@ export default function DeckBuilder({ allCards, onClose }){
 
 function PoolCard({card, onAdd}){
   const [thumb, setThumb] = useState(null)
-  useEffect(()=>{ (async()=>{
-    const imgs = await searchCardImages(card.name, false)
-    setThumb(imgs?.small || null)
-  })() },[card.name])
+  const alive = useRef(true)
+
+  useEffect(()=> {
+    alive.current = true
+    ;(async()=>{
+      const imgs = await searchCardImages(card.name, false) // rehost=false in builder
+      if (!alive.current) return
+      setThumb(imgs?.small || null)
+    })()
+    return () => { alive.current = false }
+  },[card.name])
 
   return (
     <div className="bg-slate-800 rounded-lg p-2">
       <div className="flex gap-2">
         {thumb
-          ? <img src={thumb} alt="" className="w-12 h-16 rounded object-cover"/>
+          ? <img src={thumb} alt="" className="w-12 h-16 rounded object-cover" loading="lazy"/>
           : <div className="w-12 h-16 rounded bg-slate-700" />
         }
         <div className="text-sm leading-tight">
@@ -139,7 +146,7 @@ function PoolCard({card, onAdd}){
           <div className="text-[11px] opacity-70 truncate">{(card.type||'').replaceAll('_',' ')}</div>
         </div>
       </div>
-      <button onClick={onAdd} className="mt-2 w-full text-xs py-1 rounded-md bg-emerald-600">Add</button>
+      <button onClick={onAdd} className="mt-2 w-full text-xs py-1 rounded-md bg-emerald-600 hover:bg-emerald-500">Add</button>
     </div>
   )
 }
