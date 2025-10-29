@@ -5,7 +5,7 @@ import { BOARD_SIZE, MAX_HP, MAX_CREST } from "./constants";
 import { PATH_SHAPES, buildDefaultDicePool } from "./dice";
 import { MONSTERS } from "./monsters";
 import { importYGOFromObject } from "../dataImporters/ygo";
-import { mulberry32 } from "./utils";
+import { mulberry32, rot } from "./utils";
 
 const GameCtx = createContext(null);
 export function useGame(){ return useContext(GameCtx) }
@@ -34,7 +34,7 @@ export function GameProvider({children}){
   const [turn, setTurn] = useState(0);
   const [phase, setPhase] = useState("roll");     // roll | action | gameover
   const [rolledDice, setRolledDice] = useState([]);
-  const [orientation, setOrientation] = useState(0);
+  const [orientation, setOrientation] = useState(0); // 0/90/180/270, applied to dimension shapes
   const [selectedMonster, setSelectedMonster] = useState(null);
   const [selectedFrom, setSelectedFrom] = useState(null);
 
@@ -96,8 +96,9 @@ export function GameProvider({children}){
 
     const size = mode === "advanced" ? 10 : 3;
 
+    // two independent shuffles so P2 isn't a deterministic slice of P1
     const hand1 = shuffleSeeded(pool1, localRng).slice(0, size).map((m,i)=>({ ...m, __slot:i }));
-    const hand2 = shuffleSeeded(pool2, localRng).slice(size, size*2).map((m,i)=>({ ...m, __slot:i }));
+    const hand2 = shuffleSeeded(pool2, mulberry32(freshSeed ^ 0x9e3779b9)).slice(0, size).map((m,i)=>({ ...m, __slot:i }));
 
     setPlayers([
       { id:0, hp:MAX_HP, crests:initialCrests(), dice:buildDefaultDicePool(), hand:hand1, spellBuff:0, trapReady:false },
@@ -117,6 +118,8 @@ export function GameProvider({children}){
     setOrientation(0);
     setSelectedMonster(null);
     setSelectedFrom(null);
+    setModalCard(null);
+    setModalOwner(null);
   }
 
   // Start first game (basic) after pools known
@@ -128,7 +131,7 @@ export function GameProvider({children}){
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importedPool]);
 
-  // Persistence (keep it simple—don’t persist whole game while we’re iterating rules)
+  // Persistence (simple settings only)
   useEffect(()=>{
     localStorage.setItem("ddm-settings", JSON.stringify({ rehostImages }));
   },[rehostImages]);
@@ -171,7 +174,7 @@ export function GameProvider({children}){
     const results = selected.map(die => ({ die, face: die.faces[Math.floor(rng()*6)] }));
     setRolledDice(results);
     for(const r of results){
-      // Note: Summon crests are not collected, per rules (we use them immediately in placement step)
+      // Summon faces are handled by dimensioning rules (not collected as crests)
       if(r.face.type==="crest")  addCrest(turn, r.face.crest, r.face.amt);
       if(r.face.type==="magic")  addCrest(turn, "magic",   r.face.amt||1);
       if(r.face.type==="trap")   addCrest(turn, "defense", r.face.amt||1);
@@ -196,7 +199,12 @@ export function GameProvider({children}){
   }
 
   function placePathFromDie(die, x,y){
-    const pts = (PATH_SHAPES[die.shape]||[[0,0]]).map(([dx,dy])=>[x+dx,y+dy]);
+    // APPLY ORIENTATION to the die's path shape before placement
+    const shape = PATH_SHAPES[die.shape] || [[0,0]];
+    const pts = shape
+      .map(([dx,dy]) => rot([dx,dy], orientation))
+      .map(([rx,ry]) => [x+rx, y+ry]);
+
     for(const [ax,ay] of pts){
       if(!inside(ax,ay)) return false;
       const cell = board[ay][ax];
@@ -229,7 +237,7 @@ export function GameProvider({children}){
 
   function baseHP(mon){
     // Prefer explicit HP if provided by card data; fallback to DEF/100 like before
-    if (typeof mon.hp === "number" && mon.hp > 0) return Math.round(mon.hp/10); // normalize to our 0–?
+    if (typeof mon.hp === "number" && mon.hp > 0) return Math.max(1, Math.round(mon.hp/100));
     return Math.max(1, Math.round((mon.def || 500)/100));
   }
 

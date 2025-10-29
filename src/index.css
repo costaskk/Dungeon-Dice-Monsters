@@ -16,3 +16,9 @@ html, body, #root { height: 100%; }
 .ddm-backdrop {
   background: rgba(0,0,0,0.6);
 }
+
+/* Focus ring helper for keyboard users */
+:focus-visible {
+  outline: 2px solid rgba(251,191,36,.65); /* amber-400 */
+  outline-offset: 2px;
+}

@@ -22,7 +22,6 @@ export default function CardModal() {
 
   const handleEnter = () => {
     setIsHovered(true);
-    // Refresh ownership to cancel any pending hide from a previous card
     showCardModal(c, modalOwner ?? (c.id || c.name));
   };
   const handleLeave = () => {
@@ -32,9 +31,14 @@ export default function CardModal() {
     }, 120);
   };
 
+  // Close modal immediately on click
+  const handleClickClose = () => {
+    setModalCard(null);
+  };
+
   // Frame color by family / rarity
-  const typeStr = (c.type || '').toLowerCase()
-  const rarityStr = (c.rarity || '').toLowerCase()
+  const typeStr = (c.type || '').toLowerCase();
+  const rarityStr = (c.rarity || '').toLowerCase();
   const frameColor =
     typeStr.includes("trap")
       ? "from-purple-900/90 to-indigo-800/90 border-purple-600"
@@ -44,11 +48,10 @@ export default function CardModal() {
       ? "from-amber-900/90 to-yellow-700/90 border-amber-400"
       : "from-rose-900/90 to-red-800/90 border-rose-500";
   const glow = rarityStr.includes("ultra") || rarityStr.includes("rare")
-      ? "shadow-[0_0_20px_rgba(255,255,200,0.6)]"
-      : "";
+    ? "shadow-[0_0_20px_rgba(255,255,200,0.6)]"
+    : "";
 
-  // DDM Summoning condition text
-  const stars = c.stars ?? c.level ?? 1
+  const stars = c.stars ?? c.level ?? 1;
   const summonCondition =
     stars <= 2
       ? "Requires 2 matching dice faces (★1–2)."
@@ -60,9 +63,10 @@ export default function CardModal() {
     <AnimatePresence>
       {modalCard && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+          className="fixed inset-0 z-50 flex items-center justify-center"
           onPointerEnter={handleEnter}
           onPointerLeave={handleLeave}
+          onClick={handleClickClose}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

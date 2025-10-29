@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useGame } from '../game/state'
 import { useNet } from '../game/net'
-import Sprite from './Sprite'
+import Sprite, { spriteForCard } from './Sprite'
 import Dice from './dice/Dice'
 import { searchCardImages } from '../services/ygo'
 
@@ -55,10 +55,16 @@ export default function HUD(){
     castSpell, setTrap, magicBuffered,
     showCardModal, hideCardModal
   } = useGame()
-  const { mode, isOnlineTurnOwner, broadcast } = useNet()
+  const { mode, isOnlineTurnOwner, sendAction, role } = useNet()
   const me = players[turn]
   const you = players[1-turn]
   const [rolling, setRolling] = useState(false)
+
+  const emit = (action) => {
+    if (mode === 'online') {
+      sendAction({ ...action, role }).catch(()=>{})
+    }
+  }
 
   const summonLevels = (()=> {
     const counts = new Map()
@@ -70,9 +76,11 @@ export default function HUD(){
   })()
 
   async function onRoll(){
+    if(!(mode!=='online' || isOnlineTurnOwner)) return
     setRolling(true)
     setTimeout(()=> setRolling(false), 900)
     roll()
+    emit({ type:'ROLL' })
   }
 
   const canAct = mode!=='online' || isOnlineTurnOwner
@@ -99,7 +107,7 @@ export default function HUD(){
         {phase==='roll' && (
           <button
             onClick={onRoll}
-            className="mt-2 w-full min-h-10 rounded-xl bg-emerald-600 text-slate-50 font-semibold active:scale-95"
+            className="mt-2 w-full min-h-10 rounded-xl bg-emerald-600 text-slate-50 font-semibold active:scale-95 disabled:opacity-60"
             disabled={!canAct}
           >
             Roll 3 Dice
@@ -113,18 +121,16 @@ export default function HUD(){
             )}
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button
-                onClick={()=>{ castSpell(); broadcast({type:'CAST_SPELL'}) }}
-                className="min-h-9 rounded-lg bg-indigo-600 text-slate-50 font-semibold px-2 py-2 text-xs leading-tight break-words"
+                onClick={()=>{ castSpell(); emit({type:'CAST_SPELL'}) }}
+                className="min-h-9 rounded-lg bg-indigo-600 text-slate-50 font-semibold px-2 py-2 text-xs leading-tight break-words disabled:opacity-60"
                 disabled={me.crests.magic<=0 || !canAct}
-                title="Cast Spell: +2 ATK to your monsters this turn (costs 1 Magic Crest)"
               >
                 Cast Spell (+2 ATK, -1 Magic)
               </button>
               <button
-                onClick={()=>{ setTrap(); broadcast({type:'SET_TRAP'}) }}
-                className="min-h-9 rounded-lg bg-amber-600 text-slate-900 font-semibold px-2 py-2 text-xs leading-tight break-words"
+                onClick={()=>{ setTrap(); emit({type:'SET_TRAP'}) }}
+                className="min-h-9 rounded-lg bg-amber-600 text-slate-900 font-semibold px-2 py-2 text-xs leading-tight break-words disabled:opacity-60"
                 disabled={me.crests.magic<=0 || !canAct}
-                title="Set Trap: reduce next damage to you by 3, once this turn (costs 1 Magic Crest)"
               >
                 Set Trap (Reduce next dmg by 3)
               </button>
@@ -135,8 +141,8 @@ export default function HUD(){
 
         {phase!=='gameover' && (
           <button
-            onClick={()=>{ endTurn(); broadcast({type:'END_TURN'}) }}
-            className="mt-2 w-full min-h-10 rounded-xl bg-slate-700 text-slate-100 font-semibold active:scale-95"
+            onClick={()=>{ endTurn(); emit({type:'END_TURN'}) }}
+            className="mt-2 w-full min-h-10 rounded-xl bg-slate-700 text-slate-100 font-semibold active:scale-95 disabled:opacity-60"
             disabled={!canAct}
           >
             End Turn
@@ -152,7 +158,6 @@ export default function HUD(){
           </div>
         </div>
 
-        {/* Rehost toggle */}
         <div className="mt-2 flex items-center justify-between text-xs">
           <span>Rehost images via your domain</span>
           <label className="inline-flex items-center gap-2 cursor-pointer">
@@ -182,7 +187,6 @@ export default function HUD(){
         </div>
       </div>
 
-      {/* Compact sticky HUD for phones */}
       <div className="fixed bottom-2 left-0 right-0 px-3 md:hidden">
         <div className="mx-auto max-w-md rounded-2xl bg-slate-900/95 backdrop-blur p-2 shadow-xl flex items-center justify-between text-xs">
           <div>Turn: <b>{turn+1}</b></div>
@@ -198,55 +202,75 @@ export default function HUD(){
   )
 }
 
-function SummonCard({m, showCardModal, hideCardModal}){
+function SummonCard({ m, showCardModal, hideCardModal }) {
   const [thumb, setThumb] = useState(null)
   const [large, setLarge] = useState(null)
-  const { rehostImages } = useGame()
+  const { rehostImages, selectedSummonCard, selectSummonCard } = useGame()
 
-  useEffect(()=>{
+  useEffect(() => {
     let alive = true
-    ;(async()=>{
+    ;(async () => {
       const imgs = await searchCardImages(m.name, rehostImages)
-      if(!alive) return
-      setThumb(imgs?.small || null)
-      setLarge(imgs?.large || imgs?.small || null)
+      if (!alive) return
+      const small = imgs?.small || null
+      const big = imgs?.large || small
+      setThumb(small)
+      setLarge(big)
     })()
-    return ()=>{ alive=false }
-  },[m.name, rehostImages])
+    return () => { alive = false }
+  }, [m.name, rehostImages])
 
-  const open = () => {
-    showCardModal(
-      { ...m, thumb:large||thumb, large:large||thumb },
-      m.id
-    )
-  }
-  const closeSoon = () => {
-    hideCardModal(m.id, 100)
-  }
-
-  const fam = (m.type||'').toLowerCase().includes('trap') ? 'trap'
-    : (m.type||'').toLowerCase().includes('spell') || (m.type||'').toLowerCase().includes('magic') ? 'spell'
+  const fam = (m.type || '').toLowerCase().includes('trap')
+    ? 'trap'
+    : (m.type || '').toLowerCase().includes('spell') || (m.type || '').toLowerCase().includes('magic')
+    ? 'spell'
     : 'monster'
+
+  const selected = selectedSummonCard?.id === m.id
+
+  const handleSelect = () => {
+    // attach the board sprite/image info before selection
+    const withIcon = {
+      ...m,
+      boardIconUrl: thumb,
+      sprite: spriteForCard(m)
+    }
+    selectSummonCard(withIcon)
+  }
 
   return (
     <div
-      className="w-full text-left bg-slate-800/90 rounded-xl p-3 hover:bg-slate-700/90"
-      onPointerEnter={open}
-      onPointerLeave={closeSoon}
-      onClick={open}
+      className={`w-full text-left bg-slate-800/90 rounded-xl p-3 hover:bg-slate-700/90 cursor-pointer transition-all duration-150 ${
+        selected ? 'ring-2 ring-amber-400' : ''
+      }`}
+      onPointerEnter={() =>
+        showCardModal({ ...m, thumb: large || thumb, large: large || thumb }, m.id)
+      }
+      onPointerLeave={() => hideCardModal(m.id, 100)}
+      onClick={handleSelect}
     >
       <div className="flex items-center justify-between">
         <div className="font-semibold flex items-center gap-2 text-slate-50">
-          {thumb ? <img src={thumb} alt="thumb" className="w-8 h-12 object-cover rounded"/> : <Sprite kind={m.sprite||'magus'} />}
+          {thumb ? (
+            <img src={thumb} alt="thumb" className="w-8 h-12 object-cover rounded" />
+          ) : (
+            <Sprite kind={spriteForCard(m)} />
+          )}
           <span className="leading-tight">{m.name}</span>
         </div>
         <div className="flex items-center gap-2">
-          <DieBadge family={fam} rarity={m.rarity||''} />
-          <div className="text-xs text-slate-200">★{m.stars||1}</div>
+          <DieBadge family={fam} rarity={m.rarity || ''} />
+          <div className="text-xs text-slate-200">★{m.stars || 1}</div>
         </div>
       </div>
-      <div className="mt-1 text-xs text-slate-200">ATK {m.atk} • DEF {m.def}</div>
-      {m.effect?.text && <div className="mt-2 text-[12px] text-slate-300 italic line-clamp-3">{m.effect.text}</div>}
+      <div className="mt-1 text-xs text-slate-200">
+        ATK {m.atk} • DEF {m.def}
+      </div>
+      {m.effect?.text && (
+        <div className="mt-2 text-[12px] text-slate-300 italic line-clamp-3">
+          {m.effect.text}
+        </div>
+      )}
     </div>
   )
 }

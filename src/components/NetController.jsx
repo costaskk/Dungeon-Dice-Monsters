@@ -9,7 +9,7 @@ import { useGame } from '../game/state'
 export default function NetController(){
   const { mode, roomState, role } = useNet()
   const {
-    tryDimensionAt, placeSummonAt, tryMove, tryAttack,
+    roll, tryDimensionAt, placeSummonAt, tryMove, tryAttack,
     castSpell, setTrap, endTurn
   } = useGame()
   const processed = useRef(new Set())
@@ -23,21 +23,24 @@ export default function NetController(){
     for(const [key, action] of entries){
       if(processed.current.has(key)) continue
       processed.current.add(key)
-      if(action.role === role) continue // we authored it
+
+      // if action is tagged with a role, ignore our own messages
+      if(action.role && action.role === role) continue
 
       // Apply the action locally
       switch(action.type){
-        case 'DIMENSION':  tryDimensionAt(action.x, action.y); break
-        case 'PLACE_SUMMON': placeSummonAt(action.x, action.y); break
-        case 'MOVE': tryMove(action.x, action.y); break
-        case 'ATTACK': tryAttack(action.x, action.y); break
-        case 'CAST_SPELL': castSpell(); break
-        case 'SET_TRAP': setTrap(); break
-        case 'END_TURN': endTurn(); break
+        case 'ROLL':           roll(); break
+        case 'DIMENSION':      tryDimensionAt(action.x, action.y); break
+        case 'PLACE_SUMMON':   placeSummonAt(action.x, action.y); break
+        case 'MOVE':           tryMove(action.x, action.y); break
+        case 'ATTACK':         tryAttack(action.x, action.y); break
+        case 'CAST_SPELL':     castSpell(); break
+        case 'SET_TRAP':       setTrap(); break
+        case 'END_TURN':       endTurn(); break
         default: break
       }
     }
-  }, [mode, roomState, role, tryDimensionAt, placeSummonAt, tryMove, tryAttack, castSpell, setTrap, endTurn])
+  }, [mode, roomState, role, roll, tryDimensionAt, placeSummonAt, tryMove, tryAttack, castSpell, setTrap, endTurn])
 
   return null
 }
